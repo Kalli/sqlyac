@@ -104,6 +104,26 @@ $ sqlyac analytics.sql GetLargeOrders | mysql -u admin -p ecommerce_db > large_o
 3. Run queries directly from terminal
 4. Pipe results to any database tool or file
 
+## Config 
+
+You can save a configuration file in `~/.sqlyac/config.json` with the following settings: 
+
+* `confirm` - Ask for confirmation on all queries.
+* `confirm_schema_changes` - Ask for confirmation on any queries that change the database schema (i.e. `drop table`, `alter table` etc).
+* `confirm_updates` boolean - Ask for confirmation on any queries that create, update or delete rows.
+
+Here's an example that would ask for confirmation on all updates, inserts and schema changes:
+
+```json
+{
+    "confirm": false,
+    "confirm_schema_changes": true,
+    "confirm_updates": true
+}
+```
+
+Running any commands with the `--confirm` toggle overrides your config and asks for confirmation every time.
+
 ## Notes
 
 - only parses `.sql` files

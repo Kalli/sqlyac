@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -17,7 +19,7 @@ CREATE TABLE users (
 
 ---
 -- @name InsertSampleUsers
-INSERT INTO users (username) VALUES 
+INSERT INTO users (username) VALUES
     ('alice'),
     ('bob');
 
@@ -245,7 +247,7 @@ func TestExampleSQLStructure(t *testing.T) {
 	// simulate the structure from example.sql
 	exampleQueries := []string{
 		"CreateUsersTable",
-		"CreateOrdersTable", 
+		"CreateOrdersTable",
 		"InsertSampleUsers",
 		"InsertSampleOrders",
 		"GetAllUsers",
@@ -275,6 +277,218 @@ func TestExampleSQLStructure(t *testing.T) {
 	for _, expected := range exampleQueries {
 		if !queryNames[expected] {
 			t.Errorf("missing expected query: %s", expected)
+		}
+	}
+}
+
+
+func TestLoadConfig(t *testing.T) {
+	// create a temp config file
+	tempDir, err := os.MkdirTemp("", "sqlyac_test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	configDir := filepath.Join(tempDir, ".sqlyac")
+	err = os.MkdirAll(configDir, 0755)
+	if err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.json")
+	testConfig := Config{
+		Confirm:              true,
+		ConfirmSchemaChanges: false,
+		ConfirmUpdates:       true,
+	}
+
+	configData, err := json.Marshal(testConfig)
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+
+	err = os.WriteFile(configPath, configData, 0644)
+	if err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// temporarily override home dir for testing
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	// test loading config
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	if config.Confirm != testConfig.Confirm {
+		t.Errorf("expected Confirm %v, got %v", testConfig.Confirm, config.Confirm)
+	}
+	if config.ConfirmSchemaChanges != testConfig.ConfirmSchemaChanges {
+		t.Errorf("expected ConfirmSchemaChanges %v, got %v", testConfig.ConfirmSchemaChanges, config.ConfirmSchemaChanges)
+	}
+	if config.ConfirmUpdates != testConfig.ConfirmUpdates {
+		t.Errorf("expected ConfirmUpdates %v, got %v", testConfig.ConfirmUpdates, config.ConfirmUpdates)
+	}
+}
+
+func TestLoadConfigMissingFile(t *testing.T) {
+	// test with non-existent config file
+	tempDir, err := os.MkdirTemp("", "sqlyac_test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	_, err = loadConfig()
+	if err == nil {
+		t.Error("expected error for missing config file, got none")
+	}
+}
+
+func TestContainsSchemaChanges(t *testing.T) {
+	testCases := []struct {
+		sql      string
+		expected bool
+		desc     string
+	}{
+		{"SELECT * FROM users", false, "basic select"},
+		{"DROP TABLE users", true, "drop table"},
+		{"drop table users", true, "drop table lowercase"},
+		{"CREATE TABLE test (id INT)", true, "create table"},
+		{"ALTER TABLE users ADD COLUMN email VARCHAR(100)", true, "alter table"},
+		{"TRUNCATE TABLE logs", true, "truncate table"},
+		{"INSERT INTO users VALUES (1, 'test')", false, "insert statement"},
+		{"UPDATE users SET name = 'test'", false, "update statement"},
+		{"DELETE FROM users WHERE id = 1", false, "delete statement"},
+		{"DROP DATABASE testdb", true, "drop database"},
+		{"CREATE SCHEMA analytics", true, "create schema"},
+		{"-- DROP TABLE users\nSELECT * FROM users", true, "drop in comment still counts"},
+	}
+
+	for _, tc := range testCases {
+		result := containsSchemaChanges(tc.sql)
+		if result != tc.expected {
+			t.Errorf("containsSchemaChanges(%q) = %v, expected %v (%s)", tc.sql, result, tc.expected, tc.desc)
+		}
+	}
+}
+
+func TestContainsUpdates(t *testing.T) {
+	testCases := []struct {
+		sql      string
+		expected bool
+		desc     string
+	}{
+		{"SELECT * FROM users", false, "basic select"},
+		{"UPDATE users SET name = 'test'", true, "update statement"},
+		{"update users set name = 'test'", true, "update lowercase"},
+		{"DELETE FROM users WHERE id = 1", true, "delete statement"},
+		{"delete from users where id = 1", true, "delete lowercase"},
+		{"INSERT INTO users VALUES (1, 'test')", true, "insert statement"},
+		{"CREATE TABLE users (id INT)", false, "create table"},
+		{"DROP TABLE users", false, "drop table"},
+		{"-- UPDATE users\nSELECT * FROM users", true, "update in comment still counts"},
+		{"DELETE users WHERE id = 1", true, "delete without FROM"},
+	}
+
+	for _, tc := range testCases {
+		result := containsUpdates(tc.sql)
+		if result != tc.expected {
+			t.Errorf("containsUpdates(%q) = %v, expected %v (%s)", tc.sql, result, tc.expected, tc.desc)
+		}
+	}
+}
+
+func TestConfigDefaults(t *testing.T) {
+	// test that default behavior works when no config exists
+	tempDir, err := os.MkdirTemp("", "sqlyac_test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	// this should fail to load config, triggering default behavior
+	_, err = loadConfig()
+	if err == nil {
+		t.Error("expected error for missing config, got none")
+	}
+}
+
+func TestConfirmationLogic(t *testing.T) {
+	testCases := []struct {
+		sql                  string
+		confirm              bool
+		configConfirm        bool
+		configSchemaChanges  bool
+		configUpdates        bool
+		expectedConfirmation bool
+		desc                 string
+	}{
+		{
+			sql:     "SELECT * FROM users",
+			confirm: false, configConfirm: false, configSchemaChanges: true, configUpdates: true,
+			expectedConfirmation: false,
+			desc:                 "safe query, no confirmation needed",
+		},
+		{
+			sql:     "DROP TABLE users",
+			confirm: false, configConfirm: false, configSchemaChanges: true, configUpdates: true,
+			expectedConfirmation: true,
+			desc:                 "schema change, should confirm",
+		},
+		{
+			sql:     "UPDATE users SET name = 'test'",
+			confirm: false, configConfirm: false, configSchemaChanges: true, configUpdates: true,
+			expectedConfirmation: true,
+			desc:                 "update query, should confirm",
+		},
+		{
+			sql:     "SELECT * FROM users",
+			confirm: true, configConfirm: false, configSchemaChanges: false, configUpdates: false,
+			expectedConfirmation: true,
+			desc:                 "flag override, should confirm",
+		},
+		{
+			sql:     "SELECT * FROM users",
+			confirm: false, configConfirm: true, configSchemaChanges: false, configUpdates: false,
+			expectedConfirmation: true,
+			desc:                 "config.confirm true, should confirm all",
+		},
+		{
+			sql:     "DROP TABLE users",
+			confirm: false, configConfirm: false, configSchemaChanges: false, configUpdates: true,
+			expectedConfirmation: false,
+			desc:                 "schema change but config disabled, no confirmation",
+		},
+	}
+
+	for _, tc := range testCases {
+		config := &Config{
+			Confirm:              tc.configConfirm,
+			ConfirmSchemaChanges: tc.configSchemaChanges,
+			ConfirmUpdates:       tc.configUpdates,
+		}
+
+		// simulate the confirmation logic from main()
+		needsConfirm := tc.confirm || config.Confirm ||
+			(config.ConfirmSchemaChanges && containsSchemaChanges(tc.sql)) ||
+			(config.ConfirmUpdates && containsUpdates(tc.sql))
+
+		if needsConfirm != tc.expectedConfirmation {
+			t.Errorf("confirmation logic failed for: %s\nsql: %q\nexpected: %v, got: %v",
+				tc.desc, tc.sql, tc.expectedConfirmation, needsConfirm)
 		}
 	}
 }
