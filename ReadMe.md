@@ -2,18 +2,19 @@
 
 *like [httpyac](https://httpyac.github.io) but for sql files*
 
-## What is this?
+## What is SQLYac?
 
 SQLYac lets you write multiple sql queries in a single file and execute them individually from the command line. Write your queries in an organized file, then pipe specific ones to your database tools of choice.
 
-## why
+## Why?
 
-Ever find yourself with a bunch of sql snippets scattered across files, or copying/pasting queries from your editor to terminal? SQLYac lets you:
+Ever find yourself with a bunch of sql snippets scattered across files, copying/pasting queries from your editor to the terminal or sql shell? SQLYac lets you:
 
-- organize related queries in one file
-- run specific queries by name
-- pipe results directly to mysql, sqlite3, psql, etc.
-- maintain your sql in version control with proper organization
+- Organize related queries in one file
+- Run specific queries by name
+- Pipe results directly to mysql, sqlite3, psql, etc.
+- Maintain your sql in version control with proper organization
+- Add confirmation before running potentially destructive queries (see the config section below)
 
 ## Installation
 
