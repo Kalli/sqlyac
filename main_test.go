@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"reflect"
 )
 
 func TestParseSQL(t *testing.T) {
@@ -41,7 +42,7 @@ SELECT * FROM users ORDER BY username;
 	tmpFile.Close()
 
 	// parse the file
-	queries, err := parseSQL(tmpFile.Name())
+	queries, _, err := parseSQL(tmpFile.Name())
 	if err != nil {
 		t.Fatalf("parseSQL failed: %v", err)
 	}
@@ -111,7 +112,7 @@ WHERE active = 1;
 	tmpFile.WriteString(testSQL)
 	tmpFile.Close()
 
-	queries, err := parseSQL(tmpFile.Name())
+	queries, _, err := parseSQL(tmpFile.Name())
 	if err != nil {
 		t.Fatalf("parseSQL failed: %v", err)
 	}
@@ -147,7 +148,7 @@ func TestParseSQLEmptyFile(t *testing.T) {
 	defer os.Remove(tmpFile.Name())
 	tmpFile.Close()
 
-	queries, err := parseSQL(tmpFile.Name())
+	queries, _, err := parseSQL(tmpFile.Name())
 	if err != nil {
 		t.Fatalf("parseSQL failed on empty file: %v", err)
 	}
@@ -158,7 +159,7 @@ func TestParseSQLEmptyFile(t *testing.T) {
 }
 
 func TestParseSQLMissingFile(t *testing.T) {
-	_, err := parseSQL("nonexistent.sql")
+	_, _, err := parseSQL("nonexistent.sql")
 	if err == nil {
 		t.Error("expected error for missing file, got none")
 	}
@@ -182,7 +183,7 @@ WHERE active = 1;
 	tmpFile.WriteString(testSQL)
 	tmpFile.Close()
 
-	queries, err := parseSQL(tmpFile.Name())
+	queries, _, err := parseSQL(tmpFile.Name())
 	if err != nil {
 		t.Fatalf("parseSQL failed: %v", err)
 	}
@@ -231,7 +232,7 @@ SELECT * FROM orders;
 	tmpFile.WriteString(testSQL)
 	tmpFile.Close()
 
-	queries, err := parseSQL(tmpFile.Name())
+	queries, _, err := parseSQL(tmpFile.Name())
 	if err != nil {
 		t.Fatalf("parseSQL failed: %v", err)
 	}
@@ -257,9 +258,10 @@ func TestExampleSQLStructure(t *testing.T) {
 		"GetRecentOrders",
 		"CountOrdersByStatus",
 		"CleanupTestData",
+		"QueryWithVariables",
 	}
 
-	queries, err := parseSQL("example.sql")
+	queries, _, err := parseSQL("example.sql")
 	if err != nil {
 		t.Fatalf("parseSQL failed: %v", err)
 	}
@@ -492,3 +494,107 @@ func TestConfirmationLogic(t *testing.T) {
 		}
 	}
 }
+
+func TestParseVariables(t *testing.T) {
+		// Create a temporary SQL file for testing
+		content := `SET @user_id=123;
+SET @status="active";
+SET @limit=10;
+SET @active=true;
+
+---
+-- @name SelectUser
+SELECT * 
+FROM Users
+WHERE id=@user_id;
+---
+
+---
+-- @name SelectActiveUsers
+SELECT * 
+FROM Users 
+WHERE status=@status
+LIMIT @limit;
+---`
+
+		tmpfile, err := os.CreateTemp("", "test*.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(tmpfile.Name())
+
+		if _, err := tmpfile.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+		if err := tmpfile.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		queries, variables, err := parseSQL(tmpfile.Name())
+		if err != nil {
+			t.Fatalf("parseSQL failed: %v", err)
+		}
+
+		expectedVariables := map[string]string{
+			"status":  `"active"`, // preserves quotes
+			"user_id": `123`,      // no quotes
+			"limit":   `10`,       // no quotes
+			"active":  `true`,     // no quotes
+		}
+
+		if !reflect.DeepEqual(variables, expectedVariables) {
+			t.Errorf("Expected variables %v, got %v", expectedVariables, variables)
+		}
+
+		if len(queries) != 2 {
+			t.Errorf("Expected 2 queries, got %d", len(queries))
+		}
+
+		// Test variable interpolation
+		query1 := queries[0]
+		interpolated1, err := interpolateVariables(query1.SQL, variables)
+		if err != nil {
+			t.Fatalf("interpolateVariables failed: %v", err)
+		}
+
+		expected1 := `SELECT * 
+FROM Users
+WHERE id=123;`
+
+		if interpolated1 != expected1 {
+			t.Errorf("Expected:\n%s\nGot:\n%s", expected1, interpolated1)
+		}
+
+		query2 := queries[1]
+		interpolated2, err := interpolateVariables(query2.SQL, variables)
+		if err != nil {
+			t.Fatalf("interpolateVariables failed: %v", err)
+		}
+
+		expected2 := `SELECT * 
+FROM Users 
+WHERE status="active"
+LIMIT 10;`
+
+		if interpolated2 != expected2 {
+			t.Errorf("Expected:\n%s\nGot:\n%s", expected2, interpolated2)
+		}
+}
+
+func TestInterpolateVariablesWithMissingVar(t *testing.T) {
+		sql := "SELECT * FROM Users WHERE id=@missing_var AND status=@status"
+		variables := map[string]string{
+			"status": `"active"`,
+		}
+
+		result, err := interpolateVariables(sql, variables)
+		if err != nil {
+			t.Fatalf("interpolateVariables failed: %v", err)
+		}
+
+		expected := `SELECT * FROM Users WHERE id=@missing_var AND status="active"`
+		if result != expected {
+			t.Errorf("Expected:\n%s\nGot:\n%s", expected, result)
+		}
+}
+

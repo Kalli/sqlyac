@@ -58,6 +58,34 @@ AND created_at > DATE_SUB(NOW(), INTERVAL 30 DAY);
 ---
 ```
 
+## Variables
+
+SQLYac supports variables for reusable values across queries. Define variables using `SET @variable_name="value"` syntax anywhere in your file, then reference them in queries using `@variable_name`. Here's an example:
+
+```sql
+-- @name QueryWithVariables
+SELECT * FROM orders o, users u
+WHERE u.id=@user_id 
+AND u.active=@active
+AND o.status=@status
+LIMIT @lim;
+
+SET @user_id=2;
+SET @lim=10;
+SET @active=true;
+SET @status="completed";
+```
+
+When you run `sqlyac file.sql QueryWithVariables`, the output will be:
+
+```sql
+SELECT * FROM orders o, users u
+WHERE u.id=2
+AND u.active=true
+AND o.status="completed"
+LIMIT 10;
+```
+
 ## Examples
 
 Explore what's available

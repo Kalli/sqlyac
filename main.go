@@ -61,7 +61,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	queries, err := parseSQL(filepath)
+	queries, variables, err := parseSQL(filepath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error parsing sql: %v\n", err)
 		os.Exit(1)
@@ -79,16 +79,23 @@ func main() {
 	// find and output the requested query
 	for _, q := range queries {
 		if q.Name == queryName {
+			// interpolate variables into the query
+			interpolatedSQL, err := interpolateVariables(q.SQL, variables)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error interpolating variables: %v\n", err)
+				os.Exit(1)
+			}
+
 			// check if we need confirmation based on config or flag
 			needsConfirm := confirm || config.Confirm ||
-				(config.ConfirmSchemaChanges && containsSchemaChanges(q.SQL)) ||
-				(config.ConfirmUpdates && containsUpdates(q.SQL))
+				(config.ConfirmSchemaChanges && containsSchemaChanges(interpolatedSQL)) ||
+				(config.ConfirmUpdates && containsUpdates(interpolatedSQL))
 
-			if needsConfirm && !confirmQuery(q.Name, q.SQL) {
+			if needsConfirm && !confirmQuery(q.Name, interpolatedSQL) {
 				fmt.Fprintf(os.Stderr, "cancelled\n")
 				os.Exit(1)
 			}
-			fmt.Print(q.SQL)
+			fmt.Print(interpolatedSQL)
 			return
 		}
 	}
@@ -97,23 +104,35 @@ func main() {
 	os.Exit(1)
 }
 
-func parseSQL(filepath string) ([]Query, error) {
+func parseSQL(filepath string) ([]Query, map[string]string, error) {
 	file, err := os.Open(filepath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer file.Close()
 
 	var queries []Query
 	var currentQuery *Query
 	var sqlLines []string
+	variables := make(map[string]string)
 
 	scanner := bufio.NewScanner(file)
 	nameRegex := regexp.MustCompile(`--\s*@name\s*(\w+)`)
 	separatorRegex := regexp.MustCompile(`^---+$`)
+	// Updated regex to capture quoted vs unquoted values
+	variableRegex := regexp.MustCompile(`SET\s+@(\w+)\s*=\s*(.+?)(?:;|$)`)
 
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		// check for variable definitions (SET @var="value" or SET @var=value)
+		if matches := variableRegex.FindStringSubmatch(strings.TrimSpace(line)); matches != nil {
+			varName := matches[1]
+			varValue := strings.TrimSpace(matches[2])
+			// Store the value as-is, preserving quotes or lack thereof
+			variables[varName] = varValue
+			continue
+		}
 
 		// check if this is a separator line
 		if separatorRegex.MatchString(strings.TrimSpace(line)) {
@@ -153,7 +172,27 @@ func parseSQL(filepath string) ([]Query, error) {
 		queries = append(queries, *currentQuery)
 	}
 
-	return queries, scanner.Err()
+	return queries, variables, scanner.Err()
+}
+
+func interpolateVariables(sql string, variables map[string]string) (string, error) {
+	// Match @variable_name patterns
+	variableRefRegex := regexp.MustCompile(`@(\w+)`)
+	
+	result := variableRefRegex.ReplaceAllStringFunc(sql, func(match string) string {
+		// Extract variable name from @variable_name
+		varName := variableRefRegex.FindStringSubmatch(match)[1]
+		
+		if value, exists := variables[varName]; exists {
+			// Return the value as-is (preserving original quoting)
+			return value
+		}
+		
+		// If variable not found, return the original match
+		return match
+	})
+	
+	return result, nil
 }
 
 func confirmQuery(queryName, sql string) bool {

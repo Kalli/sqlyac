@@ -93,3 +93,17 @@ ORDER BY count DESC;
 -- @name CleanupTestData
 DROP TABLE IF EXISTS orders;
 DROP TABLE IF EXISTS users;
+
+---
+-- @name QueryWithVariables
+SELECT * FROM orders o, users u
+WHERE u.id=@user_id 
+AND u.active=@active
+AND o.status=@status
+LIMIT @lim;
+
+SET @user_id=2;
+SET @lim=10;
+SET @active=true;
+SET @status="completed";
+
