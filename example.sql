@@ -96,10 +96,12 @@ DROP TABLE IF EXISTS users;
 
 ---
 -- @name QueryWithVariables
-SELECT * FROM orders o, users u
+SELECT * 
+FROM orders o, users u
 WHERE u.id=@user_id 
 AND u.active=@active
 AND o.status=@status
+AND o.user_id=u.id
 LIMIT @lim;
 
 SET @user_id=2;
